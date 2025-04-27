@@ -11,8 +11,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Folder Include="Helper\MailReader\" />
     <Folder Include="Model\" />
-    <Folder Include="Helper\" />
+    <Folder Include="ExcelExtractor\" />
+    <Folder Include="AIBot\" />
+    <Folder Include="PdfExtractor\" />
   </ItemGroup>
 
 </Project>
