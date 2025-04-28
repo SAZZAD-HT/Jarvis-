@@ -1,133 +1,72 @@
-﻿using System.Net.Http.Headers;
-using System.Text.Json;
-using System.Text;
-using Microsoft.Extensions.Configuration;
+﻿using System;
+using System.Collections.Generic;
+using System.Reflection;
+using Outlook = Microsoft.Office.Interop.Outlook;
 
 namespace Jarvis.Helper.MailReader
 {
-    public class OutLookMailService
+    public class OutlookDesktopReader
     {
-        private readonly HttpClient _httpClient;
-        private readonly IConfiguration _configuration;
-        private string _accessToken;
+        private Outlook.Application _outlookApp;
+        private Outlook.NameSpace _outlookNamespace;
 
-        public OutLookMailService(IConfiguration configuration)
+        public OutlookDesktopReader()
         {
-            _httpClient = new HttpClient();
-            _configuration = configuration;
+            _outlookApp = new Outlook.Application();
+            _outlookNamespace = _outlookApp.GetNamespace("MAPI");
+            _outlookNamespace.Logon("", "", Missing.Value, Missing.Value);
         }
 
-        private async Task AuthenticateAsync()
+        public List<OutlookMailItem> GetUnreadOrderMailsFromRoboFolder()
         {
-            var tenantId = _configuration["AzureAd:TenantId"];
-            var clientId = _configuration["AzureAd:ClientId"];
-            var clientSecret = _configuration["AzureAd:ClientSecret"];
+            var result = new List<OutlookMailItem>();
 
-            var url = $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token";
+            Outlook.MAPIFolder inboxFolder = _outlookNamespace.GetDefaultFolder(Outlook.OlDefaultFolders.olFolderInbox);
+            Outlook.MAPIFolder roboFolder = null;
 
-            var body = new Dictionary<string, string>
+            // Look for subfolder "Robo"
+            foreach (Outlook.MAPIFolder folder in inboxFolder.Folders)
             {
-                { "client_id", clientId },
-                { "scope", "https://graph.microsoft.com/.default" },
-                { "client_secret", clientSecret },
-                { "grant_type", "client_credentials" }
-            };
-
-            var response = await _httpClient.PostAsync(url, new FormUrlEncodedContent(body));
-            var json = await response.Content.ReadAsStringAsync();
-            var result = JsonDocument.Parse(json);
-
-            _accessToken = result.RootElement.GetProperty("access_token").GetString();
-        }
-
-        public async Task<List<OutlookMessage>> GetUnreadOrderMailsFromRoboFolderAsync(string userEmail)
-        {
-            if (string.IsNullOrEmpty(_accessToken))
-                await AuthenticateAsync();
-
-            var requestUrl = $"https://graph.microsoft.com/v1.0/users/{userEmail}/mailFolders/Robo/messages" +
-                             "?$filter=isRead eq false and startsWith(subject, 'Order:')" +
-                             "&$select=id,subject,receivedDateTime,bodyPreview,from" +
-                             "&$top=10" +
-                             "&$orderby=receivedDateTime desc";
-
-            var request = new HttpRequestMessage(HttpMethod.Get, requestUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-
-            var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadAsStringAsync();
-            var mailResult = JsonDocument.Parse(json);
-
-            var messages = new List<OutlookMessage>();
-
-            if (mailResult.RootElement.TryGetProperty("value", out JsonElement mails))
-            {
-                foreach (var mail in mails.EnumerateArray())
+                if (folder.Name.Equals("Robo", StringComparison.OrdinalIgnoreCase))
                 {
-                    messages.Add(new OutlookMessage
-                    {
-                        Id = mail.GetProperty("id").GetString(),
-                        Subject = mail.GetProperty("subject").GetString(),
-                        ReceivedDateTime = mail.GetProperty("receivedDateTime").GetDateTime(),
-                        BodyPreview = mail.GetProperty("bodyPreview").GetString(),
-                        From = mail.GetProperty("from").GetProperty("emailAddress").GetProperty("address").GetString()
-                    });
+                    roboFolder = folder;
+                    break;
                 }
             }
 
-            return messages;
-        }
+            if (roboFolder == null)
+                throw new Exception("Robo folder not found.");
 
-        public async Task SendEmailAsync(string recipient, string subject, string body)
-        {
-            if (string.IsNullOrEmpty(_accessToken))
-                await AuthenticateAsync();
+            Outlook.Items mailItems = roboFolder.Items;
+            mailItems = mailItems.Restrict("[Unread]=true");
 
-            var message = new
+            foreach (Outlook.MailItem item in mailItems)
             {
-                message = new
+                if (item.Subject != null && item.Subject.StartsWith("Order:", StringComparison.OrdinalIgnoreCase))
                 {
-                    subject = subject,
-                    body = new
+                    result.Add(new OutlookMailItem
                     {
-                        contentType = "Text",
-                        content = body
-                    },
-                    toRecipients = new[]
-                    {
-                        new
-                        {
-                            emailAddress = new
-                            {
-                                address = recipient
-                            }
-                        }
-                    }
-                },
-                saveToSentItems = "false"
-            };
+                        Subject = item.Subject,
+                        Body = item.Body,
+                        ReceivedTime = item.ReceivedTime,
+                        SenderEmail = item.SenderEmailAddress
+                    });
 
-            var requestContent = new StringContent(JsonSerializer.Serialize(message), Encoding.UTF8, "application/json");
+                    // Mark as read (optional)
+                    item.UnRead = false;
+                    item.Save();
+                }
+            }
 
-            var request = new HttpRequestMessage(HttpMethod.Post, $"https://graph.microsoft.com/v1.0/users/{recipient}/sendMail")
-            {
-                Content = requestContent
-            };
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-
-            var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+            return result;
         }
     }
 
-    public class OutlookMessage
+    public class OutlookMailItem
     {
-        public string Id { get; set; }
         public string Subject { get; set; }
-        public DateTime? ReceivedDateTime { get; set; }
-        public string BodyPreview { get; set; }
-        public string From { get; set; }
+        public string Body { get; set; }
+        public DateTime ReceivedTime { get; set; }
+        public string SenderEmail { get; set; }
     }
 }
