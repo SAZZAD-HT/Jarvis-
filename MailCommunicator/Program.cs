@@ -9,82 +9,118 @@ namespace OutlookMailReader
     {
         static void Main(string[] args)
         {
-            Console.WriteLine("Connecting to Outlook...");
-            Console.Out.Flush();
-
-            // Step 1: Initialize Outlook Application
-            var outlookApp = new Outlook.Application();
-            var outlookNamespace = outlookApp.GetNamespace("MAPI");
-            outlookNamespace.Logon("", "", Missing.Value, Missing.Value);
-
-            // Step 2: List all folders under Inbox
-            Outlook.MAPIFolder inbox = outlookNamespace.GetDefaultFolder(Outlook.OlDefaultFolders.olFolderInbox);
-            Console.WriteLine("\nAvailable folders under Inbox:");
-            foreach (Outlook.MAPIFolder folder in inbox.Folders)
+            try
             {
-                Console.WriteLine($"- {folder.Name}");
-            }
+                Console.WriteLine("Connecting to Outlook...");
+                // Initialize Outlook Application
+                var outlookApp = new Outlook.Application();
+                var outlookNamespace = outlookApp.GetNamespace("MAPI");
 
-            Console.WriteLine("\nEnter the name of the folder you want to read emails from (case-sensitive):");
-            string targetFolderName = Console.ReadLine();
+                // Try to log on to Outlook (this may throw a security exception)
+                outlookNamespace.Logon("", "", Missing.Value, Missing.Value);
 
-            Outlook.MAPIFolder targetFolder = null;
-            foreach (Outlook.MAPIFolder folder in inbox.Folders)
-            {
-                if (folder.Name.Equals(targetFolderName, StringComparison.OrdinalIgnoreCase))
+                Console.WriteLine("Successfully connected to Outlook.");
+
+                // Step 2: List all folders under Inbox
+                Outlook.MAPIFolder inbox = outlookNamespace.GetDefaultFolder(Outlook.OlDefaultFolders.olFolderInbox);
+                Console.WriteLine("\nAvailable folders under Inbox:");
+
+                bool folderFound = false;
+                foreach (Outlook.MAPIFolder folder in inbox.Folders)
                 {
-                    targetFolder = folder;
-                    break;
-                }
-            }
+                    Console.WriteLine($"- {folder.Name}");
 
-            if (targetFolder == null)
-            {
-                Console.WriteLine($"Folder '{targetFolderName}' not found inside Inbox!");
-                return;
-            }
-
-            // Step 3: Get unread mails
-            Outlook.Items unreadItems = targetFolder.Items.Restrict("[Unread]=true");
-
-            List<MailRecord> mails = new List<MailRecord>();
-
-            foreach (object obj in unreadItems)
-            {
-                if (obj is Outlook.MailItem mail)
-                {
-                    if (mail.Subject != null && mail.Subject.StartsWith("Order:", StringComparison.OrdinalIgnoreCase))
+                    // Check if the folder exists
+                    if (folder.Name.Equals("Robo", StringComparison.OrdinalIgnoreCase))
                     {
-                        mails.Add(new MailRecord
-                        {
-                            Subject = mail.Subject,
-                            SenderEmail = mail.SenderEmailAddress,
-                            ReceivedTime = mail.ReceivedTime,
-                            Body = mail.Body
-                        });
-
-                        // Optional: Mark the mail as read
-                        mail.UnRead = false;
-                        mail.Save();
+                        folderFound = true;
                     }
                 }
+
+                if (!folderFound)
+                {
+                    Console.WriteLine("Robo folder not found!");
+                    return;
+                }
+
+                Console.WriteLine("\nEnter the name of the folder you want to read emails from (case-sensitive):");
+                string targetFolderName = Console.ReadLine();
+
+                Outlook.MAPIFolder targetFolder = null;
+                foreach (Outlook.MAPIFolder folder in inbox.Folders)
+                {
+                    if (folder.Name.Equals(targetFolderName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetFolder = folder;
+                        break;
+                    }
+                }
+
+                if (targetFolder == null)
+                {
+                    Console.WriteLine($"Folder '{targetFolderName}' not found inside Inbox!");
+                    return;
+                }
+
+                // Step 3: Get unread mails
+                Console.WriteLine($"Looking for unread emails in '{targetFolderName}'...");
+
+                Outlook.Items unreadItems = targetFolder.Items.Restrict("[Unread]=true");
+
+                List<MailRecord> mails = new List<MailRecord>();
+
+                foreach (object obj in unreadItems)
+                {
+                    if (obj is Outlook.MailItem mail)
+                    {
+                        if (mail.Subject != null && mail.Subject.StartsWith("Order:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            mails.Add(new MailRecord
+                            {
+                                Subject = mail.Subject,
+                                SenderEmail = mail.SenderEmailAddress,
+                                ReceivedTime = mail.ReceivedTime,
+                                Body = mail.Body
+                            });
+
+                            // Optional: Mark the mail as read
+                            mail.UnRead = false;
+                            mail.Save();
+                        }
+                    }
+                }
+
+                // Step 4: Print Mails in Console
+                Console.WriteLine($"\nFound {mails.Count} mail(s) matching criteria.\n");
+
+                foreach (var mail in mails)
+                {
+                    Console.WriteLine("-----------------------------------");
+                    Console.WriteLine($"Subject      : {mail.Subject}");
+                    Console.WriteLine($"Sender Email : {mail.SenderEmail}");
+                    Console.WriteLine($"ReceivedTime : {mail.ReceivedTime}");
+                    Console.WriteLine($"Body         : {(string.IsNullOrEmpty(mail.Body) ? "(Empty)" : mail.Body.Substring(0, Math.Min(mail.Body.Length, 100)))}...");
+                    Console.WriteLine("-----------------------------------\n");
+                }
+
+                Console.WriteLine("Completed reading mails. Press any key to exit...");
+                Console.ReadKey();
             }
-
-            // Step 4: Print Mails in Console (or you can pass to another method)
-            Console.WriteLine($"\nFound {mails.Count} mail(s) matching criteria.\n");
-
-            foreach (var mail in mails)
+            catch (System.UnauthorizedAccessException ex)
             {
-                Console.WriteLine("-----------------------------------");
-                Console.WriteLine($"Subject      : {mail.Subject}");
-                Console.WriteLine($"Sender Email : {mail.SenderEmail}");
-                Console.WriteLine($"ReceivedTime : {mail.ReceivedTime}");
-                Console.WriteLine($"Body         : {(string.IsNullOrEmpty(mail.Body) ? "(Empty)" : mail.Body.Substring(0, Math.Min(mail.Body.Length, 100)))}...");
-                Console.WriteLine("-----------------------------------\n");
+                Console.WriteLine("Permission Error: The application does not have the required permissions to access Outlook.");
+                Console.WriteLine($"Error Details: {ex.Message}");
             }
-
-            Console.WriteLine("Completed reading mails. Press any key to exit...");
-            Console.ReadKey();
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                Console.WriteLine("COM Error: Failed to interact with Outlook.");
+                Console.WriteLine($"Error Details: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("An unexpected error occurred.");
+                Console.WriteLine($"Error Details: {ex.Message}");
+            }
         }
     }
 
