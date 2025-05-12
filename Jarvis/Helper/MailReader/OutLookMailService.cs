@@ -33,7 +33,6 @@ namespace Jarvis.Helper.MailReader
                     break;
                 }
             }
-
             if (roboFolder == null)
                 throw new Exception("Robo folder not found.");
 
@@ -57,7 +56,6 @@ namespace Jarvis.Helper.MailReader
                     item.Save();
                 }
             }
-
             return result;
         }
     }
